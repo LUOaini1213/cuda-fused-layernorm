@@ -1,10 +1,28 @@
 # Fused Residual-Add + LayerNorm — CUDA C++ 实现与对照
 
-> ### 验证状态（2026-09-02）
+> ### 受控对照结果（2026-09-02，Tesla T4）
 >
-> 表中所有数字均在单张 GTX 1650（`sm_75`，4 GiB）上实测、可复跑。
-> 与 Triton 版的对照此前只能跨卡参照（本机 GTX 1650 vs 记录中的 Kaggle T4），**不是受控 A/B**。
-> `three_way/bench3.py` 与 `cloud_gpu_verify.ipynb` 提供同卡三方受控对照，结果待补。
+> 此前与 Triton 版的比较只能跨卡参照（本机 GTX 1650 vs 记录中的 Kaggle T4），
+> 那不是受控 A/B，只能说「量级相当」。现已在 **单张 T4 上跑完三方受控对照**，
+> 结论与跨卡参照给人的印象**相反**：
+>
+> | 同卡对照（T4，12 组形状） | 中位 | 范围 |
+> |---|---|---|
+> | Triton 对 eager | **1.341×** | 0.592× – 2.054× |
+> | CUDA C++ 对 eager | 1.087× | 0.278× – 1.620× |
+> | **CUDA C++ 对 Triton** | **0.812×** | 0.468× – 0.997× |
+>
+> **本 CUDA 实现慢于 Triton 版，12 组中无一组胜出（最高 0.997×）。**
+> 最可能的原因：Triton 按形状自动调优 `num_warps` 与 block 大小，
+> 而本实现用的是固定启发式（`num_warps` 由 `d_model` 一刀切、每线程约 4 元素）。
+>
+> **端到端更值得注意**：把算子接进真实 Transformer block（6 层，注意力与 MLP 共用同一实现，
+> 差别只在 norm 一处）后，CUDA 版的整体增益中位仅 **0.983×**（范围 0.642× – 1.609×），
+> 只有「小 batch 短序列」一档拿到 1.609×。
+> **孤立算子层面的加速，在整层前向里基本被摊薄殆尽** —— LayerNorm 占 block 成本的比例太小，
+> 注意力与四个 GEMM 才是大头。
+>
+> 本仓保留全部数据，包括不利于本实现的那些。复现见 `cloud_gpu_verify.ipynb`。
 
 
 把 [TikTok TechJam 2026 Track 3](https://github.com/LUOaini1213/tiktok-techjam-2026-track3)
