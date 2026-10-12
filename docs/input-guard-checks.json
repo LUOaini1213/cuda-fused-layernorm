@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "kind": "offline_raw_pointer_input_guards",
+  "base_commit": "4af3e689dc912754061d247991b3f73e77d60a89",
+  "python": "3.13.14",
+  "torch": "2.13.0+cpu",
+  "checks": [
+    {
+      "command": "python -B -m unittest discover -s tests -v",
+      "passed": 21,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "command": "python -O -B -m unittest discover -s tests -v",
+      "passed": 21,
+      "failed": 0,
+      "skipped": 0
+    }
+  ],
+  "source_hash_policy": "SHA256 of LF-normalized UTF-8 source; avoids checkout conversion differences.",
+  "source_sha256": {
+    "fused_ln_cuda.py": "78a4e7f03d3c1e8880759b4e70dd45e143e026fa92329eb18985fb35ed0593cf",
+    "three_way/fused_ln_cuda.py": "78a4e7f03d3c1e8880759b4e70dd45e143e026fa92329eb18985fb35ed0593cf",
+    "tests/test_input_guards.py": "7b413a848e2ade1662b4476e8b3630da39579225ba463143ea838b81a4695570"
+  },
+  "historical_readme_rows_unchanged": 44,
+  "historical_identity": "Both original wrappers equal the frozen source snapshot; eight existing kernel/benchmark/result paths unchanged, verified in the suite.",
+  "boundary": {
+    "cpu_tensors": "Tiny real CPU fallback cases, not a model evaluation.",
+    "cuda_inputs": "Tensor metadata mocks and fake pointer/launch callbacks; not CUDA/GPU correctness.",
+    "gpu_jobs": 0,
+    "gpu_device_probes": 0,
+    "cupy_runtime_calls": 0,
+    "kernel_compilations_or_launches": 0,
+    "model_calls": 0,
+    "dependency_installs": 0,
+    "new_performance_results": false
+  },
+  "device_context_policy": "Current CuPy device must match tensor metadata; never switch context. First accepted device binds the existing process-wide function/module cache under a lock; later device changes fail closed."
+}
