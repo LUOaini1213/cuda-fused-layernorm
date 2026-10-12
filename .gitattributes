@@ -1,0 +1,2 @@
+# Frozen source snapshots must preserve recorded Git bytes on every platform.
+historical/** -text

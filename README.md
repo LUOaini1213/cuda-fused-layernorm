@@ -46,6 +46,19 @@ warp 内 `__shfl_down_sync` 蝶形规约 → shared memory 跨 warp 汇总 → �
 
 ## 构建
 
+**2026-10-12 输入边界更新：** 两个维护入口（根目录与 `three_way/`）在
+CUDA 原始指针路径之前检查设备、残差 dtype/原始形状，以及 weight/bias
+的一维向量长度。非法输入显式拒绝，`python -O` 不会绕过检查。CuPy 仅在
+实际 CUDA 路径导入，并要求当前 CuPy device 与输入 device 相同；不自动切换
+context。现有 module/function cache 固定在本进程首次合法 CUDA device，
+后续切设备显式拒绝，需新进程使用另一设备。合法 CPU fallback 的广播、dtype 提升与可选 affine
+语义保留。离线 CPU/metadata 探针不能证明 GPU 正确性或性能。
+下文全部数值仍为历史实验；内核、benchmark、原始结果均未修改，也未重测。
+[边界与验收](docs/input-guards.md) · [历史 wrapper 来源](historical/4af3e68/source.json)
+
+无 GPU/CuPy 的检查：`python -B -m unittest discover -s tests -v`，
+以及 `python -O -B -m unittest discover -s tests -v`（需要 CPU PyTorch）。
+
 不需要 CUDA Toolkit，也不需要 MSVC —— 内核经 **NVRTC 运行时编译**（CuPy `RawModule`），
 `.cu` 源码是标准 CUDA C++。
 

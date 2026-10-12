@@ -1,0 +1,20 @@
+{
+  "source_commit": "4af3e689dc912754061d247991b3f73e77d60a89",
+  "snapshot": "historical/4af3e68/fused_ln_cuda.py.txt",
+  "original_paths": [
+    "fused_ln_cuda.py",
+    "three_way/fused_ln_cuda.py"
+  ],
+  "snapshot_sha256": "ed5389417ef8b94e4ad2c09e63fa3c54dbef326e8728164ccef90c843ff9b9e2",
+  "boundary": "Historical source audit only; not imported/executed. New guarded wrappers have no GPU performance or correctness acceptance.",
+  "unchanged_git_blobs": {
+    "bench_results.json": "a3021870788916bc255457252376cdb65235c288",
+    "results_t4/t4_three_way_and_e2e.txt": "98d39a774819d8c0832fc89b4d13fd3c65152c16",
+    "kernel.cu": "9e3da40bc0702b19920aaf352aaade83b40279b7",
+    "three_way/kernel.cu": "9e3da40bc0702b19920aaf352aaade83b40279b7",
+    "bench.py": "37d4bffc030da33af397696b01d1620ceb6c3706",
+    "three_way/bench3.py": "a00c3e861fdb1d02283ffa8afc1b7fb01b42dc80",
+    "three_way/bench_e2e.py": "13d8d601774bdbc56f085d78cd19c4df852ae1aa",
+    "three_way/fused_ln_triton.py": "4727b401191748a0e0120186ad365e258b388482"
+  }
+}
