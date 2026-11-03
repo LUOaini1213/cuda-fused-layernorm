@@ -1,0 +1,10 @@
+# GPU benchmark environment, pinned to the versions printed in the header of
+# results_t4/t4_three_way_and_e2e.txt (Colab Tesla T4, 2026-09-02):
+#   torch 2.11.0+cu128, triton 3.6.0, cupy 14.0.1 (cupy-cuda12x).
+# numpy was not recorded in that log, so it is not pinned here.
+# The older GTX 1650 run (bench_results.json) used torch 2.7.1+cu126 and cupy 13.6.0.
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+triton==3.6.0
+cupy-cuda12x==14.0.1
+numpy

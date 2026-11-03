@@ -2,8 +2,17 @@
 
 Both maintained wrappers now validate assumptions before their fused raw-pointer
 path reshapes tensors, allocates outputs, imports CuPy or dispatches a function.
-The kernel code and launch arguments for valid metadata are unchanged. This is
-an input-reliability change, not a GPU numerical or performance result.
+The kernel code and launch arguments for valid metadata were unchanged by that
+2026-10-12 change. This is an input-reliability change, not a GPU numerical or
+performance result.
+
+**2026-11-03 update.** The scalar launch arguments were later found to be wrong
+in type: `float(eps)` was packed by CuPy as float64 while the kernel reads a
+4-byte `const float`, so the kernel saw eps of about -1.37e-33. The wrappers now
+pass `np.int32` / `np.float32` scalars (`_scalar_args`), and the suite checks
+each scalar's type against the `kernel.cu` signature. The hashes in
+`input-guard-checks.json` describe the 2026-10-12 wrapper and are kept as that
+dated record.
 
 The raw path requires a nonempty CUDA input with a supported float16/float32
 dtype, last dimension 1–1024, and matching weight/bias dtype. Both affine tensors
@@ -38,7 +47,8 @@ original residual shape, and short weight all reached that backend. No real
 CUDA tensor, device probe, GPU allocation, CuPy runtime, NVRTC compilation or
 kernel was used. The regression suite exercises both current entrypoints and
 checks that invalid metadata is rejected before those boundaries. Paired valid
-metadata checks retain the original grid/thread/stride/eps/residual arguments.
+metadata checks retain the original grid/thread/stride/eps/residual values
+(since 2026-11-03 as 4-byte NumPy scalars, see above).
 Real tiny CPU tensors compare fallback results exactly against PyTorch.
 
 These tests establish routing, explicit device/context refusals and CPU semantics. They do not establish GPU
@@ -52,8 +62,10 @@ The last recorded wrapper source is frozen as a non-entry-point `.py.txt` from
 those bytes (SHA256 `ed5389417ef8b94e4ad2c09e63fa3c54dbef326e8728164ccef90c843ff9b9e2`).
 It is not imported/executed and is only historical source evidence. New wrappers
 must not be attributed to the old measurements. Tests compare the snapshot
-against both recorded Git blobs and protect eight existing kernel, benchmark
-and result paths. No old measurement is regenerated or rewritten.
+against both recorded Git blobs and protect the existing kernel and result
+paths. The three benchmark drivers were edited on 2026-11-03 (accuracy gate,
+end-to-end warm-up); their recorded blobs are still verified, but they are no
+longer required to match. No old measurement is regenerated or rewritten.
 
 Run locally with an existing CPU PyTorch installation:
 
@@ -62,8 +74,9 @@ python -B -m unittest discover -s tests -v
 python -O -B -m unittest discover -s tests -v
 ```
 
-The new CPU workflow pins Torch 2.7.1 on Python 3.11 and fetches history for the
-source audit. It has not run remotely before publication. Local tests use the
-existing Torch 2.13.0+cpu/Python 3.13 environment, without dependency installation.
+The CPU workflow pins Torch 2.7.1 on Python 3.11 and fetches history for the
+source audit. It first passed on GitHub Actions on 2026-10-12 (run 38204644101,
+the merge of PR #1); since 2026-11-03 it runs on ubuntu-latest and windows-latest.
+The 2026-10-12 local run used Torch 2.13.0+cpu/Python 3.13.
 Actual counts, source fingerprints and audit boundaries are in
 [input-guard-checks.json](input-guard-checks.json).

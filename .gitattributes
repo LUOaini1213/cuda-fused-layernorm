@@ -1,2 +1,10 @@
+# Text files are stored and checked out with LF on every platform.
+* text=auto eol=lf
+*.json text eol=lf
+*.ipynb text eol=lf
+# Result images/archives (none committed today) must never be converted.
+*.png -text
+*.pdf -text
+*.zip -text
 # Frozen source snapshots must preserve recorded Git bytes on every platform.
 historical/** -text

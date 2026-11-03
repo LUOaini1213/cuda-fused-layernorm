@@ -8,11 +8,14 @@
 避免小形状被噪声主导。精度与计时分阶段，阶段间释放张量——4 GiB 卡上若让三份实现的
 输出同时驻留，大形状会因显存压力把计时打歪。
 """
-import gc, json, statistics as st, time
+import gc, json, os, statistics as st, sys, time
 import torch
 
 import fused_ln_cuda as CUDA
 import fused_ln_triton as TRI
+# accuracy_gate.py lives one level up; append so this folder's wrapper copy wins.
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import accuracy_gate as G
 
 CASES = [                       # (标签, rows, D)
     ("shape 1/5/9-11", 8192,    128),
@@ -23,14 +26,15 @@ CASES = [                       # (标签, rows, D)
     ("shape 13",       65536,   128),
 ]
 IMPLS = ["eager", "triton", "cuda2", "cuda1"]
+DEVICE = "cuda"           # tests/test_accuracy_gate.py drives run() on CPU
 
 
 def make(rows, D, dtype):
     torch.manual_seed(0)
-    return (torch.randn(rows, D, device="cuda", dtype=dtype),
-            torch.randn(rows, D, device="cuda", dtype=dtype),
-            torch.randn(D, device="cuda", dtype=dtype),
-            torch.randn(D, device="cuda", dtype=dtype))
+    return (torch.randn(rows, D, device=DEVICE, dtype=dtype),
+            torch.randn(rows, D, device=DEVICE, dtype=dtype),
+            torch.randn(D, device=DEVICE, dtype=dtype),
+            torch.randn(D, device=DEVICE, dtype=dtype))
 
 
 def call(impl, x, r, w, b):
@@ -88,6 +92,11 @@ def run(dtype, tag):
     for label, rows, D in CASES:
         try:
             errs = accuracy(rows, D, dtype)
+            fails = G.error_failures(errs, tag)
+            for impl in IMPLS[1:]:
+                fails += G.constant_row_failures(
+                    lambda x, r, w, b, impl=impl: call(impl, x, r, w, b), D, dtype, DEVICE, name=impl)
+            fails = [f"{tag} {label}: {m}" for m in fails]
             t = {i: time_one(i, rows, D, dtype) for i in IMPLS}
             print(f"{label:<16}{rows:>9}{D:>6}"
                   f"{t['eager']:>9.4f}{t['triton']:>9.4f}{t['cuda2']:>9.4f}{t['cuda1']:>9.4f}"
@@ -98,7 +107,8 @@ def run(dtype, tag):
                             tri_vs_eager=t['eager']/t['triton'],
                             cuda_vs_eager=t['eager']/t['cuda2'],
                             cuda_vs_triton=t['triton']/t['cuda2'],
-                            **{f"err_{i}": errs[i] for i in IMPLS}))
+                            **{f"err_{i}": errs[i] for i in IMPLS},
+                            gate_failures=fails))
         except torch.cuda.OutOfMemoryError:
             print(f"{label:<16}{rows:>9}{D:>6}   OOM (4GB)"); free()
     return out
@@ -117,3 +127,4 @@ if __name__ == "__main__":
                     ("cuda_vs_triton", "CUDA    对 Triton")]:
         v = [r[k] for r in out]
         print(f"\n{name}：中位 {st.median(v):.3f}×   范围 {min(v):.3f}× – {max(v):.3f}×")
+    sys.exit(G.report([m for r in out for m in r["gate_failures"]]))
