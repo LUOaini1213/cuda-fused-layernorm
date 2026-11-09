@@ -6,7 +6,7 @@ compared with PyTorch eager and the original Triton kernel on one Tesla T4 (12 s
 Triton/eager 1.341×, CUDA/eager 1.087×). Inside a 6-layer Transformer forward the CUDA norm gives a median **0.983×** end to end.
 **Bug found 2026-11-03:** the wrapper passed `eps` as a Python float, which CuPy packs as float64, so the kernel's `float eps` read about −1.4e−33.
 All committed error columns were measured with that bug (fp32 errors ~2–4e−5, about 20× eager); the wrapper is fixed, the error columns need a GPU rerun.
-**Limits:** one T4 run (Colab, 2026-09-02) plus one GTX 1650 run; timings are expected but not yet re-verified after the fix;
+**Limits:** one T4 run (Colab, 2026-09-02) plus one committed GTX 1650 run (of three); timings are expected but not yet re-verified after the fix;
 why Triton is faster is an untested hypothesis (fixed launch heuristics on both sides; at D=128 Triton uses 128 threads per row, this kernel 32).
 
 > ### 受控对照结果（2026-09-02，Tesla T4）
