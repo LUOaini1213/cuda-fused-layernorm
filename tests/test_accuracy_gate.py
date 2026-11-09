@@ -249,5 +249,31 @@ class E2EOrderTests(unittest.TestCase):
         self.assertTrue(callable(e2e.warmup))
 
 
+def main_block_calls(path):
+    """Top-level call names, in order, inside ``if __name__ == "__main__":``."""
+    import ast
+    tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+    for node in tree.body:
+        if isinstance(node, ast.If) and "__main__" in ast.unparse(node.test):
+            return [ast.unparse(stmt.value if isinstance(stmt, ast.Expr) else stmt) for stmt in node.body]
+    raise AssertionError("no __main__ block in " + path)
+
+
+class MainBlockTests(unittest.TestCase):
+    """The GPU entry points must act on the gate and the warm-up, not only define them."""
+
+    def test_bench_scripts_exit_with_gate_result(self):
+        for path in ("bench.py", "three_way/bench3.py"):
+            body = main_block_calls(path)
+            with self.subTest(path=path):
+                self.assertTrue(body[-1].startswith("sys.exit(G.report("), body[-1])
+
+    def test_e2e_warms_up_before_timing(self):
+        body = main_block_calls("three_way/bench_e2e.py")
+        warm = body.index("warmup()")
+        first_run = next(i for i, s in enumerate(body) if "run(torch.float32" in s)
+        self.assertLess(warm, first_run)
+
+
 if __name__ == "__main__":
     unittest.main()
