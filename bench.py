@@ -7,9 +7,10 @@
 精度与计时分两个阶段跑，阶段间释放全部张量：4GB 卡上若让三份实现的输出同时驻留，
 大形状会因显存压力把计时打歪（实测 shape 6 会从 28.6ms 劣化到 137ms）。
 """
-import gc, json, statistics as st, time
+import gc, json, statistics as st, sys, time
 import torch
 import fused_ln_cuda as F
+import accuracy_gate as G
 
 CASES = [                       # (标签, rows, D, T4 上 Triton 的 vs_eager)
     ("shape 1/5/9-11", 8192,    128,  1.486),
@@ -20,14 +21,15 @@ CASES = [                       # (标签, rows, D, T4 上 Triton 的 vs_eager)
     ("shape 13",       65536,   128,  1.797),
 ]
 IMPLS = ["eager", "2pass", "1pass"]
+DEVICE = "cuda"           # tests/test_accuracy_gate.py drives run() on CPU
 
 
 def make(rows, D, dtype):
     torch.manual_seed(0)
-    return (torch.randn(rows, D, device="cuda", dtype=dtype),
-            torch.randn(rows, D, device="cuda", dtype=dtype),
-            torch.randn(D, device="cuda", dtype=dtype),
-            torch.randn(D, device="cuda", dtype=dtype))
+    return (torch.randn(rows, D, device=DEVICE, dtype=dtype),
+            torch.randn(rows, D, device=DEVICE, dtype=dtype),
+            torch.randn(D, device=DEVICE, dtype=dtype),
+            torch.randn(D, device=DEVICE, dtype=dtype))
 
 
 def call(impl, x, r, w, b):
@@ -90,6 +92,11 @@ def run(dtype, tag):
     for label, rows, D, tri in CASES:
         try:
             errs = accuracy(rows, D, dtype)
+            fails = G.error_failures(errs, tag)
+            for impl in IMPLS[1:]:
+                fails += G.constant_row_failures(
+                    lambda x, r, w, b, impl=impl: call(impl, x, r, w, b), D, dtype, DEVICE, name=impl)
+            fails = [f"{tag} {label}: {m}" for m in fails]
             t = {i: time_one(i, rows, D, dtype) for i in IMPLS}
             # 融合路径的显存流量：读 x、读 r、写 sum、写 out
             gbs = rows * D * torch.tensor([], dtype=dtype).element_size() * 4
@@ -101,7 +108,7 @@ def run(dtype, tag):
                             **{f"{i}_ms": t[i] for i in IMPLS},
                             vs_eager=t["eager"] / t["2pass"], gibs=gbs,
                             **{f"err_{i}": errs[i] for i in IMPLS},
-                            triton_t4_vs_eager=tri))
+                            triton_t4_vs_eager=tri, gate_failures=fails))
         except torch.cuda.OutOfMemoryError:
             print(f"{label:<16}{rows:>9}{D:>6}   OOM (4GB)")
             free()
@@ -117,3 +124,4 @@ if __name__ == "__main__":
     sp = [r["vs_eager"] for r in out]
     print(f"\n中位加速比（对 eager，{len(sp)} 组）: {st.median(sp):.3f}×")
     print(f"同形状 Triton(T4) 中位: {st.median([r['triton_t4_vs_eager'] for r in out]):.3f}×")
+    sys.exit(G.report([m for r in out for m in r["gate_failures"]]))

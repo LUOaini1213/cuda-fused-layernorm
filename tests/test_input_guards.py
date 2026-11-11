@@ -11,16 +11,23 @@ from pathlib import Path
 import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
+import re
+import struct
 
+import numpy
 import torch
 import torch.nn.functional as F
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "4af3e689dc912754061d247991b3f73e77d60a89"
 LEGACY_SHA = "ed5389417ef8b94e4ad2c09e63fa3c54dbef326e8728164ccef90c843ff9b9e2"
+# Result artifacts and kernels that produced them stay byte-identical to BASE.
 PROTECTED = ("bench_results.json", "results_t4/t4_three_way_and_e2e.txt", "kernel.cu",
-             "three_way/kernel.cu", "bench.py", "three_way/bench3.py", "three_way/bench_e2e.py",
-             "three_way/fused_ln_triton.py")
+             "three_way/kernel.cu", "three_way/fused_ln_triton.py")
+# Benchmark drivers changed on 2026-11-03 (accuracy gate, e2e warm-up/rotation).
+# Their recorded BASE blobs are still verified, but the committed results above
+# were produced by the BASE versions, not by the current files.
+CHANGED_SINCE_BASE = ("bench.py", "three_way/bench3.py", "three_way/bench_e2e.py")
 
 
 def load(path, name):
@@ -132,7 +139,14 @@ class MetadataGuardTests(unittest.TestCase):
                     grid, threads, args = function.return_value.call_args.args
                     self.assertEqual(grid, (2,))
                     self.assertEqual(threads, (32,))
-                    self.assertEqual(args[-4:], (3, 3, 1e-5, int(residual is not None)))
+                    stride, n, eps, has_res = args[-4:]
+                    # kernel.cu declares (const int, const int, const float, const int);
+                    # CuPy packs Python float/int as 8-byte float64/int64, so the
+                    # wrapper must pass exact 4-byte NumPy scalars.
+                    self.assertEqual([type(v) for v in args[-4:]],
+                                     [numpy.int32, numpy.int32, numpy.float32, numpy.int32])
+                    self.assertEqual((int(stride), int(n), int(has_res)), (3, 3, int(residual is not None)))
+                    self.assertEqual(eps, numpy.float32(1e-5))
                     self.assertEqual(pointer.call_count, 6)
                     self.assertEqual(result.shape, (2, 3))
                     self.assertEqual(total.shape, (2, 3))
@@ -243,16 +257,60 @@ class HistoricalTests(unittest.TestCase):
         manifest = json.loads((ROOT / "historical/4af3e68/source.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["source_commit"], BASE)
         self.assertEqual(manifest["snapshot_sha256"], LEGACY_SHA)
-        self.assertEqual(set(manifest["unchanged_git_blobs"]), set(PROTECTED))
+        self.assertEqual(set(manifest["unchanged_git_blobs"]), set(PROTECTED) | set(CHANGED_SINCE_BASE))
         for path in ["fused_ln_cuda.py", "three_way/fused_ln_cuda.py"]:
             self.assertEqual(subprocess.check_output(["git", "show", BASE + ":" + path], cwd=ROOT), frozen)
 
     def test_kernels_benchmarks_and_results_are_unchanged(self):
         manifest = json.loads((ROOT / "historical/4af3e68/source.json").read_text(encoding="utf-8"))
-        for path in PROTECTED:
+        for path in PROTECTED + CHANGED_SINCE_BASE:
             self.assertEqual(subprocess.check_output(["git", "rev-parse", BASE + ":" + path], cwd=ROOT, text=True).strip(), manifest["unchanged_git_blobs"][path])
+        for path in PROTECTED:
             checked = subprocess.run(["git", "diff", "--exit-code", BASE, "--", path], cwd=ROOT, capture_output=True)
             self.assertEqual(checked.returncode, 0, path)
+
+
+def kernel_scalar_params(path):
+    """Non-pointer parameter types of every __global__ kernel in a .cu file."""
+    source = (ROOT / path).read_text(encoding="utf-8")
+    kernels = re.findall(r"__global__\s+void\s+(\w+)\s*\(([^)]*)\)", source)
+    if not kernels:
+        raise AssertionError("no __global__ kernels found in " + path)
+    result = {}
+    for name, params in kernels:
+        scalars = []
+        for param in params.split(","):
+            param = " ".join(param.split())
+            if "*" in param:
+                continue
+            words = param.replace("const ", "").split()
+            scalars.append(words[0])
+        result[name] = scalars
+    return result
+
+
+class KernelScalarABITests(unittest.TestCase):
+    """Each scalar CuPy argument must have the exact C type the kernel reads."""
+    C_TO_NUMPY = {"int": numpy.int32, "float": numpy.float32}
+
+    def test_scalar_arguments_match_kernel_signature_in_both_copies(self):
+        for wrapper, cu in zip(WRAPPERS, ["kernel.cu", "three_way/kernel.cu"]):
+            values = wrapper._scalar_args(128, 128, 1e-5, True)
+            for name, c_types in kernel_scalar_params(cu).items():
+                with self.subTest(entry=wrapper.__name__, kernel=name):
+                    self.assertEqual(c_types, ["int", "int", "float", "int"])
+                    self.assertEqual([type(v) for v in values], [self.C_TO_NUMPY[t] for t in c_types])
+                    for value in values:
+                        self.assertEqual(numpy.asarray(value).itemsize, 4)
+            raw = numpy.asarray(values[2]).tobytes()
+            self.assertAlmostEqual(struct.unpack("<f", raw)[0], 1e-5, delta=1e-12)
+
+    def test_python_float_would_reach_a_float_param_as_garbage(self):
+        # What the pre-2026-11-03 wrapper did: CuPy packs float(1e-5) as float64;
+        # a `const float` parameter reads only its low 4 bytes.
+        low_half = struct.unpack("<f", struct.pack("<d", 1e-5)[:4])[0]
+        self.assertLess(low_half, 0)
+        self.assertLess(abs(low_half), 1e-30)
 
 
 if __name__ == "__main__":

@@ -101,6 +101,34 @@ def timeit(fn, budget_ms=300.0):
     return st.median(ts)
 
 
+# 2026-11-03: the committed T4 run timed modes in a fixed order (eager first) once per
+# config, so the very first timed cell of the process (fp32 eager, small config) carried
+# start-up cost. Now: one global warm-up pass, REPEATS rounds with the mode order rotated
+# each round; the median over rounds is reported and the per-round times are kept.
+REPEATS = 3
+
+
+def rotated(modes, k):
+    k %= len(modes)
+    return modes[k:] + modes[:k]
+
+
+@torch.inference_mode()
+def warmup():
+    """Run every mode on every config once, untimed, before any measurement."""
+    modes = ["eager"] + (["triton"] if HAVE_TRI else []) + ["cuda"]
+    for dtype in (torch.float32, torch.float16):
+        for _, B, S, D, H, FF, L in CONFIGS:
+            torch.manual_seed(0)
+            m = Stack(L, D, H, FF, dtype).cuda().eval()
+            x = torch.randn(B, S, D, device="cuda", dtype=dtype)
+            for mode in modes:
+                for _ in range(3):
+                    m(x, mode)
+            torch.cuda.synchronize()
+            del m, x; gc.collect(); torch.cuda.empty_cache()
+
+
 @torch.inference_mode()
 def run(dtype, tag):
     modes = ["eager"] + (["triton"] if HAVE_TRI else []) + ["cuda"]
@@ -119,7 +147,11 @@ def run(dtype, tag):
             o = m(x, mode)
             errs[mode] = (o.float() - ref.float()).abs().max().item()
             del o
-        t = {mode: timeit(lambda mode=mode: m(x, mode)) for mode in modes}
+        reps = {mode: [] for mode in modes}
+        for k in range(REPEATS):
+            for mode in rotated(modes, k):
+                reps[mode].append(timeit(lambda mode=mode: m(x, mode)))
+        t = {mode: st.median(v) for mode, v in reps.items()}
 
         row = f"{label:<16}{f'{B}x{S}x{D}':>16}{L:>4}" + "".join(f"{t[mo]:>10.3f}" for mo in modes)
         row += f"{t['eager']/t['cuda']:>9.3f}x"
@@ -128,6 +160,8 @@ def run(dtype, tag):
         print(row)
         out.append(dict(case=label, B=B, S=S, D=D, layers=L, dtype=tag,
                         **{f"{mo}_ms": t[mo] for mo in modes},
+                        **{f"{mo}_ms_min": min(reps[mo]) for mo in modes},
+                        **{f"{mo}_ms_rounds": reps[mo] for mo in modes},
                         cuda_gain=t['eager']/t['cuda'],
                         **({'triton_gain': t['eager']/t['triton']} if HAVE_TRI else {}),
                         **{f"err_{k}": v for k, v in errs.items()}))
@@ -140,8 +174,9 @@ if __name__ == "__main__":
     print(f"GPU: {p.name} | sm_{p.major}{p.minor} | torch {torch.__version__} | "
           f"Triton {'可用' if HAVE_TRI else '不可用'}")
     print("说明：三份实现共用同一套权重与同一注意力实现，差别只在 norm 这一处。")
+    warmup()
     out = run(torch.float32, "fp32") + run(torch.float16, "fp16")
     json.dump(out, open("bench_e2e_results.json", "w"), indent=1)
     g = [r["cuda_gain"] for r in out]
     print(f"\nCUDA 融合算子的端到端增益：中位 {st.median(g):.3f}×  范围 {min(g):.3f}× – {max(g):.3f}×")
-    print("对照：同一算子孤立测量时中位 1.428×。两者的差距就是「算子加速被整层摊薄」的幅度。")
+    print("对照：请与同一张卡上 bench3.py 的「CUDA 对 eager」中位比较（不要与另一张卡的数字比）。")

@@ -78,6 +78,23 @@ def _threads_for(n: int) -> int:
     return max(32, min(1024, _next_pow2(max(1, (n + 3) // 4))))
 
 
+def _scalar_args(stride_row, n, eps, has_res):
+    """Scalar kernel arguments with the exact 4-byte types kernel.cu declares.
+
+    CuPy RawKernel does not read the kernel signature: a Python float is packed
+    as float64 and a Python int as int64, while the kernel reads 4 bytes per
+    parameter. For ints the low 4 bytes are still the right value on
+    little-endian hardware, but for ``const float eps`` the low half of the
+    double 1e-5 reads as about -1.37e-33, so the kernel effectively ran with
+    eps ~ 0 (and a zero-variance row gives rsqrtf(negative) = NaN). Up to
+    2026-11-03 this wrapper passed ``float(eps)``; every committed error column
+    was measured with that bug. NumPy is a CuPy dependency, so it is always
+    present on this CUDA path.
+    """
+    import numpy as np
+    return (np.int32(stride_row), np.int32(n), np.float32(eps), np.int32(bool(has_res)))
+
+
 def _validate_cuda_inputs(x, residual, weight, bias):
     """Validate raw-pointer assumptions before allocations, reshaping or CuPy."""
     n = x.shape[-1]
@@ -139,7 +156,7 @@ def fused_add_layernorm(x, residual, weight, bias, eps=1e-5, variant="2pass"):
         (rows,), (_threads_for(n),),
         (_as_cupy(flat), _as_cupy(rc), _as_cupy(out), _as_cupy(total),
          _as_cupy(weight.contiguous()), _as_cupy(bias.contiguous()),
-         flat.stride(0), n, float(eps), int(has_res)),
+         *_scalar_args(flat.stride(0), n, eps, has_res)),
     )
     shape = x.shape
     return out.view(shape), (total.view(shape) if has_res else x)
