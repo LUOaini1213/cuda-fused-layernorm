@@ -188,6 +188,39 @@ class ReadmeClaimTests(unittest.TestCase):
         self.assertIn("at D=128 Triton uses 128 threads per row, this kernel 32", readme)
         self.assertIn("D=128 时每行 32 线程", readme)
         self.assertNotIn("自动调优", readme)
+        # The thread-count explanation is a hypothesis and must stay labelled as one.
+        self.assertIn("untested hypothesis", readme)
+        self.assertIn("尚未验证的假设", readme)
+
+    def test_equal_thread_count_case_quoted_in_readme(self):
+        # At D=1024 both sides launch 256 threads per row (Triton: 8 warps), and the
+        # committed T4 rows still show CUDA behind Triton, so thread count alone
+        # cannot explain the gap. README quotes those two CUDA/TRI cells.
+        import re
+        triton_src = (ROOT / "three_way/fused_ln_triton.py").read_text(encoding="utf-8")
+        self.assertIn("block = _next_pow2(n)", triton_src)
+        self.assertIn("num_warps = 4 if block <= 512 else 8", triton_src)
+        for wrapper in WRAPPERS:
+            self.assertEqual(wrapper._threads_for(1024), 8 * 32)
+        t4 = (ROOT / "results_t4/t4_three_way_and_e2e.txt").read_text(encoding="utf-8")
+        cells = re.findall(r"^shape 8\s+8192\s+1024(?:\s+[\d.]+){6}\s+([\d.]+)\s+[\d.e+-]+$", t4, re.M)
+        self.assertEqual(len(cells), 2, cells)
+        fp32, fp16 = cells
+        self.assertLess(float(fp32), 1.0)
+        self.assertLess(float(fp16), 1.0)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(f"still {fp32}× (fp32) / {fp16}× (fp16) of Triton", readme)
+        self.assertIn(f"D=1024 时两边都是每行 256 线程，CUDA 版仍只有 Triton 的 {fp32}×（fp32）/ {fp16}×（fp16）", readme)
+
+    def test_pre_fix_results_stay_labelled(self):
+        # The committed result files are the pre-fix blobs (HistoricalTests keeps them
+        # byte-identical), so the README must keep saying what is wrong with them.
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        for label in ("the error columns need a GPU rerun",
+                      "max\\|err\\|（eps bug，待重跑）",
+                      "误差列需在 GPU 上重跑后更新",
+                      "疑似预热伪影"):
+            self.assertIn(label, readme)
 
 
 class BenchWiringTests(unittest.TestCase):

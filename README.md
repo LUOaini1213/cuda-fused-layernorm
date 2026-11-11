@@ -8,6 +8,7 @@ Triton/eager 1.341×, CUDA/eager 1.087×). Inside a 6-layer Transformer forward 
 All committed error columns were measured with that bug (fp32 errors ~2–4e−5, about 20× eager); the wrapper is fixed, the error columns need a GPU rerun.
 **Limits:** one T4 run (Colab, 2026-09-02) plus one committed GTX 1650 run (of three); timings are expected but not yet re-verified after the fix;
 why Triton is faster is an untested hypothesis (fixed launch heuristics on both sides; at D=128 Triton uses 128 threads per row, this kernel 32).
+Thread count cannot be the whole explanation: at D=1024 both launch 256 threads per row and the port is still 0.851× (fp32) / 0.844× (fp16) of Triton.
 
 > ### 受控对照结果（2026-09-02，Tesla T4）
 >
@@ -25,6 +26,7 @@ why Triton is faster is an untested hypothesis (fixed launch heuristics on both 
 > 两边都是**固定启发式**，都没有 autotune：Triton 版 `num_warps = 4 if BLOCK <= 512 else 8`
 > （`three_way/fused_ln_triton.py`，D≤512 时每行 128 线程），本实现每线程约 4 元素、至少一个 warp
 > （D=128 时每行 32 线程）。线程数差异是一个**尚未验证的假设**，需要在 GPU 上扫线程数才能确认。
+> 它也解释不了全部差距：D=1024 时两边都是每行 256 线程，CUDA 版仍只有 Triton 的 0.851×（fp32）/ 0.844×（fp16）。
 >
 > **端到端**：把算子接进真实 Transformer block（6 层，注意力与 MLP 共用同一实现，
 > 差别只在 norm 一处）后，CUDA 版的整体增益中位仅 **0.983×**（范围 0.642× – 1.609×），
@@ -74,6 +76,9 @@ python bench.py        # 性能与精度（GTX 1650 表），精度门不过时�
 python stability.py    # 数值稳定性实验
 cd three_way && python bench3.py && python bench_e2e.py   # T4 三方对照与端到端
 ```
+
+`triton` 只发布 Linux wheel，`requirements-gpu.txt` 里带了平台标记，Windows 上会跳过这一行。
+`bench.py`、`stability.py` 不用 Triton；`three_way/` 的 Triton 列需要 Linux（T4 那次是在 Colab 上跑的）。
 
 无 GPU 的检查（Windows / Linux 均可，CI 两个平台都跑）：
 

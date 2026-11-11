@@ -44,6 +44,8 @@ class RequirementFileTests(unittest.TestCase):
                              ("cupy-cuda12x==14.0.1", "cupy 14.0.1")):
             self.assertIn(pin, gpu)
             self.assertIn(printed, header)
+        # triton has no Windows wheels; an unmarked pin makes the whole file uninstallable there.
+        self.assertRegex(gpu, r'(?m)^triton==3\.6\.0; platform_system == "Linux"\r?$')
 
 
 if __name__ == "__main__":
